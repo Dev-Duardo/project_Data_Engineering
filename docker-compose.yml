@@ -1,0 +1,71 @@
+version: "3.8"
+
+services:
+  minio:
+    image: minio/minio
+    container_name: minio
+    environment:
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minio010203
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  minio_mc:
+    image: minio/mc
+    container_name: minio_mc
+    depends_on:
+      - minio
+    entrypoint: /bin/sh -c
+
+    # Removidas aspas externas desnecessárias (opcional, mas mais seguro)
+    # Garante que MINIO_ACCESS_KEY/SECRET_KEY correspondem ao definido no serviço minio
+    command: |
+      echo "Waiting for MinIO..."
+      while ! curl -s http://minio:9000;
+      do sleep 10;
+      done;
+      echo "MinIO is up. Configuring mc."
+      mc alias set myminio http://minio:9000 minioadmin minio010203
+      mc mb myminio/landing
+
+  postgres-airflow:
+    build:
+      context: .
+      dockerfile: config_airflow/airflow.Dockerfile
+    container_name: postgres-airflow
+    environment:
+      POSTGRES_USER: post_airflow
+      POSTGRES_PASSWORD: airflow_123
+      POSTGRES_DB: airflow
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  airflow:
+    image: apache/airflow:2.9.2 # <--- EXEMPLO - USE A VERSÃO DESEJADA
+    container_name: airflow
+    environment:
+      AIRFLOW_CORE_SQL_ALCHEMY_CONN: postgresql+psycopg2://post_airflow:airflow_123@postgres-airflow:5432/airflow
+      AIRFLOW_CORE_LOAD_EX: "false"
+      AIRFLOW_CORE_DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW_CORE_LOGGING_LEVEL: INFO
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minio010203
+    depends_on:
+      - postgres-airflow
+      - minio
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./airflow/dags:/sr/local/airflow/dags
+    command: ["airflow", "standalone"]
+
+volumes:
+  postgres_data:
+  minio_data:
